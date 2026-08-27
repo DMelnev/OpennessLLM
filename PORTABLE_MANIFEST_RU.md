@@ -43,7 +43,6 @@ OpennessLLM\TROUBLESHOOTING_RU.md
 OpennessLLM\CODEX_HANDOFF.md
 OpennessLLM\PORTABLE_MANIFEST_RU.md
 OpennessLLM\CHANGELOG.md
-OpennessLLM\GITHUB_PUBLISHING_RU.md
 OpennessLLM\.artifactignore
 OpennessLLM\.gitattributes
 OpennessLLM\.gitignore

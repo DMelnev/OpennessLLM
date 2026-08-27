@@ -3,7 +3,7 @@
 For a model-neutral startup protocol, read `LLM_START_HERE_RU.md` first.
 Detailed docs: `COMMAND_REFERENCE_RU.md`, `WORKFLOWS_RU.md`,
 `SAFETY_GATES_RU.md`, `INTERNALS_RU.md`, `TROUBLESHOOTING_RU.md`,
-`CHANGELOG.md`, and `GITHUB_PUBLISHING_RU.md`.
+and `CHANGELOG.md`.
 
 `OpennessLLM` is a C#/.NET Framework command-line tool for LLM-assisted TIA
 Portal Openness engineering work.
