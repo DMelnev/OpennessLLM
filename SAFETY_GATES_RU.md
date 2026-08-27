@@ -1,0 +1,569 @@
+# OpennessLLM Safety Gates
+
+Этот файл объясняет защитные механизмы `OpennessLLM`: почему команды требуют
+dry-run, `--apply`, backup, check reports и collateral gates.
+
+## 1. Главный принцип
+
+TIA Portal проект содержит скрытые связи, compile state, HMI object identities,
+Instance DB relationships и другие данные, которые легко повредить прямой
+генерацией XML или blind import.
+
+Поэтому production workflow строится так:
+
+```text
+read-only snapshot
+локальный анализ
+dry-run/preflight
+отчеты gates
+явный --apply
+post-check
+accept baseline только после проверки
+```
+
+LLM не должна писать в проект "по догадке". Она должна использовать команды,
+которые сами проверяют текущее состояние проекта.
+
+## 2. Классы команд по риску
+
+### Local-only
+
+Не открывают TIA Portal:
+
+```text
+version
+self-test
+block-info
+hmi-digest
+hmi-apply-preflight
+sync-clone
+clean-local
+plc-runtime-probe
+plc-runtime-map
+plc-runtime-read
+plc-runtime-snapshot
+```
+
+Риск: только локальные файлы workspace/output. Исключение: `clean-local --apply`
+может удалить разрешенные локальные generated artifacts.
+
+`plc-runtime-probe`, `plc-runtime-read` и `plc-runtime-snapshot` не открывают
+TIA Portal, но подключаются к живому PLC по S7comm. Они должны оставаться
+read-only. `plc-runtime-snapshot` пишет только локальные диагностические файлы в
+`CLONE_PROJECT\_runtime_snapshots` или указанный `--out`.
+
+`plc-runtime-map` начиная с `0.12.1` включает Global DB и Instance DB. Global DB
+Data-поля попадают в карту как `write-candidate`, но это не разрешение на запись:
+реальная PLC runtime-запись по-прежнему возможна только через отдельную команду
+`plc-runtime-write` с двумя явными флагами.
+
+### PLC runtime write
+
+Не открывает TIA Portal и не меняет проект, но может изменить значения в живом
+PLC:
+
+```text
+plc-runtime-write
+```
+
+Реальная запись требует два флага:
+
+```cmd
+--apply --i-know-this-writes-plc
+```
+
+Без обоих флагов команда обязана быть dry-run. Перед реальной записью LLM должна
+получить явное подтверждение человека, назвать DB/переменную/offset/старое и
+новое значение. Команда дополнительно блокирует:
+
+```text
+read-only строки runtime-карты;
+неподдерживаемые типы;
+маски выходов CommandMask / AllowedOutputMask со старшими битами выше 24.
+```
+
+### Read-only TIA commands
+
+Подключаются к TIA или открывают проект, но не вызывают write/import/delete:
+
+```text
+tree
+inventory
+status
+check-all
+init-workspace
+hmi-inventory
+hmi-export-xml
+hmi-init-clone
+hmi-check
+hmi-sync-clone
+hmi-import-capabilities
+hmi-textlist-model-probe
+hmi-screen-model-probe
+hmi-project-texts-probe
+clone-folders
+init-clone
+check-clone
+export-xml
+export-documents
+export-source
+inspect
+```
+
+Замечание: `hmi-sync-clone` и `sync-clone` не пишут в TIA, но меняют baseline в
+`CLONE_PROJECT`. Это acceptance action, его нельзя делать автоматически без
+понимания результата.
+
+### Copy-only probes
+
+Пишут только в отдельную копию проекта:
+
+```text
+hmi-import-probe-copy
+hmi-project-texts-import-probe-copy
+```
+
+Эти команды не должны использовать `--attach`, потому что они создают и открывают
+отдельный copied project.
+
+### Write commands
+
+Могут изменить текущий TIA проект:
+
+```text
+apply-clone
+compile-block
+compile-all
+delete-block
+set-attribute
+create-test-visual-fb
+hmi-project-texts-apply
+```
+
+Для реального действия требуют `--apply`.
+
+## 3. `--apply` gate
+
+По умолчанию write-команды работают как dry-run, если это возможно.
+
+Пример:
+
+```cmd
+.\OpennessLLM\run.cmd apply-clone --attach --out .\CLONE_PROJECT
+```
+
+Это строит план, preflight и issues, но не пишет в TIA.
+
+Реальная запись:
+
+```cmd
+.\OpennessLLM\run.cmd apply-clone --attach --out .\CLONE_PROJECT --apply
+```
+
+Почему это важно:
+
+```text
+LLM может ошибиться в интерпретации задачи;
+проект мог измениться после последнего чтения;
+source file мог быть изменен вручную;
+TIA SDK может вернуть неожиданные capabilities;
+HMI import может давать collateral changes.
+```
+
+Правило: если команда поддерживает dry-run, сначала запускать dry-run.
+
+## 4. Backup gate
+
+Production write-команды, которые могут менять проект, обычно создают backup
+папки перед real apply.
+
+`--no-backup` существует для тестов и специальных случаев, но production gates
+могут блокировать его:
+
+```text
+apply-clone production apply не должен идти с --no-backup;
+hmi-project-texts-apply production apply не должен идти с --no-backup;
+compile commands позволяют --no-backup, но это осознанный режим.
+```
+
+Backup не заменяет preflight. Backup нужен как rollback safety, а preflight -
+чтобы не делать плохую запись вообще.
+
+## 5. Save gate
+
+`--apply` и `--save` разделены.
+
+```text
+--apply  Выполнить действие в открытом TIA проекте.
+--save   Сохранить проект после успешного действия.
+```
+
+Почему раздельно:
+
+```text
+можно проверить результат визуально в TIA перед сохранением;
+compile может изменить state без необходимости немедленного save;
+post-apply gates могут rejected результат, и тогда save не должен происходить.
+```
+
+Правило: использовать `--save` только когда результат принят.
+
+## 6. PLC clone baseline gate
+
+PLC workflow основан на `CLONE_PROJECT`.
+
+Baseline содержит:
+
+```text
+source files в CLONE_PROJECT\_root;
+plc-blocks.csv;
+clone-check-blocks.csv;
+_metadata\blocks.jsonl;
+_metadata\clone-manifest.json;
+source SHA-256 hashes;
+Number/NumberSpace/NumberMode/AutoNumber;
+InstanceOfName для Instance DB.
+```
+
+Перед `apply-clone --apply` нужно свежее:
+
+```cmd
+.\OpennessLLM\run.cmd check-clone --attach --out .\CLONE_PROJECT
+```
+
+Если baseline dirty, `apply-clone` должен остановиться или показать issues.
+
+## 7. PLC stale source gate
+
+Опасная ситуация:
+
+```text
+LLM сделала check-clone;
+пользователь изменил блок в TIA вручную;
+LLM применяет старый clone source;
+ручная правка пользователя теряется.
+```
+
+Защита:
+
+```text
+check-clone записывает CurrentSourceSha256;
+перед real apply инструмент экспортирует live source для изменяемых блоков;
+если live SHA отличается от CurrentSourceSha256, apply блокируется.
+```
+
+Что делать при срабатывании:
+
+```cmd
+.\OpennessLLM\run.cmd check-clone --attach --out .\CLONE_PROJECT
+```
+
+Затем вручную решить конфликт: принять TIA изменение, обновить clone или
+объединить изменения.
+
+## 8. PLC source blocker gate
+
+Некоторые блоки могут не иметь безопасного source round-trip.
+
+Примеры:
+
+```text
+unsupported language;
+export source failed;
+visual LAD/FBD/GRAPH source не проверен;
+Instance DB с опасной сменой InstanceOfName;
+source text не соответствует ожидаемому типу.
+```
+
+`apply-clone` должен блокировать real write, если source blocker делает план
+небезопасным.
+
+Для LAD/FBD/GRAPH действует дополнительная осторожность. Нужна явная проверка
+round-trip или sidecar marker `visualSourceVerified=true`, если workflow это
+предусматривает.
+
+## 9. PLC number gate
+
+TIA block numbers живут в number spaces:
+
+```text
+FB
+FC
+DB
+OB
+```
+
+Одинаковый номер может существовать в разных spaces, например `FB5` и `DB5`.
+Поэтому поиск номера должен использовать:
+
+```cmd
+.\OpennessLLM\run.cmd block-info --number 5 --number-space FB --out .\CLONE_PROJECT
+.\OpennessLLM\run.cmd block-info --number 5 --number-space DB --out .\CLONE_PROJECT
+```
+
+Final duplicate number gate в `apply-clone` проверяет, что после всех create,
+delete, rename и number changes не возникает конфликтов.
+
+## 10. PLC group move gate
+
+Автоматический move блока между PLC block groups запрещен.
+
+Причина: TIA Openness не дает безопасного публичного API для перемещения блока,
+а delete/recreate может сломать скрытые связи.
+
+Правильный workflow:
+
+```text
+1. Сделать move вручную в TIA Portal.
+2. Запустить check-clone.
+3. Если move принят, выполнить sync-clone.
+```
+
+Rename внутри той же group поддерживается через clone workflow, но group move -
+нет.
+
+## 11. PLC Instance DB gate
+
+Instance DB связан с FB через `InstanceOfName`.
+
+Опасные операции:
+
+```text
+сменить InstanceOfName;
+удалить FB, у которого есть Instance DB;
+создать Instance DB, если referenced FB отсутствует;
+применить DB раньше referenced FB.
+```
+
+Защита:
+
+```text
+metadata хранит InstanceOfName;
+apply-clone проверяет referenced FB;
+Instance DB применяются после FB/FC/OB sources;
+опасные изменения блокируются.
+```
+
+## 12. HMI XML gate
+
+HMI XML тяжелый и не предназначен как прямой LLM output.
+
+Правило:
+
+```text
+hmi-export-xml нужен как полный snapshot;
+hmi-digest нужен как рабочий формат для анализа;
+hmi-apply-preflight может патчить только локальную копию XML;
+blind XML import в основной проект запрещен как production workflow.
+```
+
+Причина: XML import может менять больше объектов, чем ожидалось, или потерять
+скрытые связи.
+
+## 13. HMI check gate
+
+Перед HMI patch/apply baseline должен быть clean:
+
+```cmd
+.\OpennessLLM\run.cmd hmi-check --attach --out .\CLONE_PROJECT
+```
+
+Если `hmi-check-objects.csv` содержит non-unchanged targets, patch preflight или
+ProjectTexts apply должны блокироваться.
+
+Что делать:
+
+```text
+если TIA изменение правильное - hmi-sync-clone;
+если clone должен победить - разобраться вручную;
+если export/parse error - сначала исправить blocker.
+```
+
+## 14. HMI patch collateral gate
+
+`hmi-apply-preflight` создает локальный patched snapshot и повторный digest.
+
+Gate сравнивает:
+
+```text
+что ожидалось изменить по patch;
+что реально изменилось в digest/collateral;
+есть ли unexpected rows outside target.
+```
+
+Если collateral unexpected, нельзя переходить к import/apply strategy.
+
+## 15. HMI copy-only import gate
+
+Перед production HMI ProjectTexts apply нужно доказать стратегию на копии:
+
+```cmd
+.\OpennessLLM\run.cmd hmi-project-texts-import-probe-copy --project .\Project.ap21 --in <patched-dir> --out .\CLONE_PROJECT
+```
+
+Gate accepted только если:
+
+```text
+импорт прошел в копии;
+target rows изменены как ожидалось;
+unexpected collateral отсутствует;
+object diff не показывает побочных изменений.
+```
+
+Если copy-only probe failed, production apply запрещен.
+
+## 16. HMI ProjectTexts final gates
+
+`hmi-project-texts-apply` перед import проверяет:
+
+```text
+explicit --apply;
+наличие --in patched dir;
+наличие target language;
+backup policy;
+clean live HMI baseline;
+accepted copy-only rehearsal;
+target/source language mode;
+отсутствие unexpected collateral;
+актуальность live export перед import.
+```
+
+После import проверяет:
+
+```text
+object diffs;
+collateral diffs;
+target texts;
+copy gate consistency;
+save policy.
+```
+
+Если post-apply gate rejected, команда падает с ошибкой и указывает summary.
+
+## 17. Compile gates
+
+`compile-block` и `compile-all` требуют `--apply`.
+
+Без `--apply`:
+
+```text
+compile-block сообщает dry-run;
+compile-all показывает compile strategy и targets.
+```
+
+С `--apply`:
+
+```text
+выполняется TIA CompileProvider;
+печатаются recursive compiler messages;
+errors приводят к non-zero exit;
+--save выполняется только при zero errors.
+```
+
+`compile-all` сначала пытается самый широкий compile provider. Если project-level
+provider недоступен, использует software target fallback.
+
+## 18. Cleanup gates
+
+`clean-local` по умолчанию audit-only.
+
+Запрещено:
+
+```cmd
+.\OpennessLLM\run.cmd clean-local --apply
+```
+
+Разрешенный destructive scope должен быть явным:
+
+```cmd
+.\OpennessLLM\run.cmd clean-local --scope probe-generated --apply
+```
+
+`workspace-transient` в текущей версии используется как audit для временных
+папок workspace. Удалять вручную только после просмотра отчета.
+
+## 19. Какие отчеты смотреть перед write
+
+Перед `apply-clone --apply`:
+
+```text
+clone-check-summary.txt
+clone-check-blocks.csv
+apply-clone-preflight-summary.txt
+apply-clone-preflight-plan.csv
+apply-clone-preflight-issues.csv
+apply-clone-gates.csv
+```
+
+Перед `hmi-project-texts-apply --apply`:
+
+```text
+hmi-check-summary.txt
+hmi-apply-preflight-summary.txt
+hmi-apply-preflight-issues.csv
+hmi-apply-preflight-collateral.csv
+hmi-project-texts-import-probe-copy-summary.txt
+hmi-project-texts-import-probe-copy-collateral.csv
+hmi-project-texts-apply-preflight-summary.txt
+hmi-project-texts-apply-preflight-gate.csv
+```
+
+После write:
+
+```text
+compile output;
+check-clone;
+hmi-check;
+apply summary;
+post-apply gate reports.
+```
+
+## 20. Когда можно делать sync
+
+`sync-clone` и `hmi-sync-clone` означают:
+
+```text
+текущее состояние TIA проекта принято как новый baseline.
+```
+
+Можно делать, если:
+
+```text
+изменение было намеренным;
+compile/check прошли;
+визуальная проверка HMI выполнена, если это HMI;
+нет unresolved collateral или dirty status.
+```
+
+Нельзя делать, если:
+
+```text
+sync нужен только чтобы убрать ошибку;
+непонятно, почему baseline dirty;
+есть подозрение на потерю пользовательской правки;
+copy-only rehearsal failed.
+```
+
+## 21. Минимальное правило для LLM
+
+Если LLM не уверена, write-команда это или нет:
+
+```cmd
+.\OpennessLLM\run.cmd --help
+```
+
+Если команда принимает `--apply`, сначала запускать без `--apply`.
+
+Если отчет содержит слово:
+
+```text
+blocked
+failed
+error
+unexpected collateral
+source blocker
+stale
+duplicate
+```
+
+нужно остановиться и разобраться до записи.

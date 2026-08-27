@@ -1,0 +1,8 @@
+bin/
+out/
+clean-local-last/
+.git/
+../CLONE_PROJECT/
+*.zip
+*.tmp
+*.log

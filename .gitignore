@@ -1,0 +1,23 @@
+# Build and test output
+/bin/
+/obj/
+/out/
+/clean-local-last/
+
+# Local artifacts
+*.zip
+*.tmp
+*.log
+
+# IDE and user state
+/.vs/
+/.vscode/
+/.idea/
+*.suo
+*.user
+*.swp
+
+# Project-specific workspaces must not be committed to the tool repository
+/CLONE_PROJECT/
+/_runtime_maps/
+/_runtime_snapshots/
