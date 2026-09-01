@@ -275,8 +275,24 @@ Instance DB с опасной сменой InstanceOfName;
 source text не соответствует ожидаемому типу.
 ```
 
-`apply-clone` должен блокировать real write, если source blocker делает план
-небезопасным.
+`apply-clone` и `sync-clone` блокируют real write, если source blocker относится
+к блоку, который **отслеживается клоном**:
+
+```text
+source-blocked-language-converted   блок был STL/SCL в клоне, стал LAD/FBD/GRAPH в TIA;
+source-blocked-export-error         source export отслеживаемого блока не удался.
+```
+
+Блок со статусом `source-blocked-current-only` (существует только в live-проекте
+на неподдерживаемом языке, в клон никогда не входил) в план apply/sync не
+попадает: отбор строк его исключает, а `sync-clone` помечает `skipped`. Такой
+блок пишется в `clone-check-source-blockers.csv` для информации и **не**
+блокирует команду. Это позволяет вести STL/SCL-правки в проектах, где рядом
+штатно живут LAD / F_LAD блоки (например fail-safe).
+
+Регрессия интерфейса (LAD-вызыватель ломается из-за смены сигнатуры
+изменённого SCL-блока) ловится на `compile-all`, который workflow гоняет после
+apply.
 
 Для LAD/FBD/GRAPH действует дополнительная осторожность. Нужна явная проверка
 round-trip или sidecar marker `visualSourceVerified=true`, если workflow это

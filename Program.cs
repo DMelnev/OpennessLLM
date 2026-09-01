@@ -14041,6 +14041,34 @@ namespace OpennessLLM
                 && status.StartsWith("source-blocked-", StringComparison.OrdinalIgnoreCase);
         }
 
+        // A source-blocked row only blocks apply-clone / sync-clone when the clone
+        // actually tracks that block: it regressed from STL/SCL to a visual language
+        // ("source-blocked-language-converted") or its tracked source export failed
+        // ("source-blocked-export-error"). A block that exists only in the live TIA
+        // project in an unsupported language ("source-blocked-current-only") is never
+        // part of an apply/sync plan -- downstream row selection already excludes it
+        // and sync-clone already marks it "skipped" -- so it must not gate the whole
+        // command. This keeps apply-clone usable on projects that legitimately keep
+        // LAD / F_LAD (for example fail-safe) blocks alongside STL/SCL logic.
+        private static bool IsBlockingSourceBlockedStatus(string status)
+        {
+            return EqualsIgnoreCase(status, "source-blocked-language-converted")
+                || EqualsIgnoreCase(status, "source-blocked-export-error");
+        }
+
+        private static int BlockingSourceBlockerCount(
+            List<Dictionary<string, string>> blockRows,
+            List<Dictionary<string, string>> sourceBlockerRows)
+        {
+            int fromBlocks = blockRows == null
+                ? 0
+                : blockRows.Count(x => IsBlockingSourceBlockedStatus(GetCsvValue(x, "Status")));
+            int fromReport = sourceBlockerRows == null
+                ? 0
+                : sourceBlockerRows.Count(x => IsBlockingSourceBlockedStatus(GetCsvValue(x, "Status")));
+            return Math.Max(fromBlocks, fromReport);
+        }
+
         private static string SourceBlockerCode(CloneDiffRecord diff)
         {
             if (EqualsIgnoreCase(diff.Status, "source-blocked-language-converted"))
@@ -14074,7 +14102,7 @@ namespace OpennessLLM
         private static void EnsureNoSourceBlockersForWrite(string commandName, List<Dictionary<string, string>> blockRows)
         {
             List<Dictionary<string, string>> blockers = blockRows
-                .Where(x => IsSourceBlockedStatus(GetCsvValue(x, "Status")))
+                .Where(x => IsBlockingSourceBlockedStatus(GetCsvValue(x, "Status")))
                 .ToList();
             if (blockers.Count == 0)
             {
@@ -14084,7 +14112,7 @@ namespace OpennessLLM
             string first = blockers
                 .Select(x => FirstNonEmpty(GetCsvValue(x, "CurrentName"), GetCsvValue(x, "CloneName"), GetCsvValue(x, "Name")))
                 .FirstOrDefault();
-            throw new InvalidOperationException(commandName + " is blocked because the latest check-clone report contains " + blockers.Count + " source-blocked block(s). First blocker: " + first + ". Convert unsupported LAD/FBD/GRAPH blocks to STL/SCL in TIA, compile, and run check-clone again. See CLONE_PROJECT\\clone-check-source-blockers.csv.");
+            throw new InvalidOperationException(commandName + " is blocked because the latest check-clone report contains " + blockers.Count + " clone-tracked source-blocked block(s). First blocker: " + first + ". A block the clone tracks was converted to LAD/FBD/GRAPH or failed source export. Convert it back to STL/SCL in TIA, compile, and run check-clone again. Pre-existing LAD/F_LAD blocks that were never in CLONE_PROJECT are listed for information only and no longer block this command. See CLONE_PROJECT\\clone-check-source-blockers.csv.");
         }
 
         private static void WriteStatusCounts(StreamWriter writer, string label, IEnumerable<string> statuses)
@@ -16103,7 +16131,7 @@ namespace OpennessLLM
 
             List<Dictionary<string, string>> allRows = ReadCsv(blockReportPath);
             List<Dictionary<string, string>> sourceBlockerRows = ReadCsvIfExists(sourceBlockerReportPath);
-            int sourceBlockerCount = Math.Max(StatusPrefixCount(allRows, "Status", "source-blocked-"), sourceBlockerRows.Count);
+            int sourceBlockerCount = BlockingSourceBlockerCount(allRows, sourceBlockerRows);
             AddApplyCloneGate(
                 gates,
                 "before-write",
@@ -20969,6 +20997,7 @@ namespace OpennessLLM
             RunSelfTestCase(results, outDir, "apply-clone-gates-final-duplicate-number", SelfTestApplyCloneGatesFinalDuplicateNumber);
             RunSelfTestCase(results, outDir, "apply-clone-gates-delete-fb-instance-db", SelfTestApplyCloneGatesDeleteFbInstanceDb);
             RunSelfTestCase(results, outDir, "apply-clone-gates-visual-unverified-real-apply", SelfTestApplyCloneGatesVisualUnverifiedRealApply);
+            RunSelfTestCase(results, outDir, "apply-clone-gates-untracked-visual-block-allowed", SelfTestApplyCloneGatesUntrackedVisualBlockAllowed);
             RunSelfTestCase(results, outDir, "apply-clone-canonical-source-formatting", SelfTestApplyCloneCanonicalSourceFormatting);
 
             WriteSelfTestReports(outDir, results);
@@ -21686,6 +21715,37 @@ namespace OpennessLLM
 
             ApplyPreflightResult result = RunApplyClonePreflight(new List<ApplyPlanItem> { item }, snapshot, rootDir, false);
             AssertTrue(result.Issues.Any(x => EqualsIgnoreCase(x.Code, "GROUP_CHANGE_FORBIDDEN")), "Clone-side group move should be forbidden.");
+        }
+
+        private static void SelfTestApplyCloneGatesUntrackedVisualBlockAllowed(string caseDir)
+        {
+            List<Dictionary<string, string>> rows = new List<Dictionary<string, string>>
+            {
+                new Dictionary<string, string> { { "Status", "changed" }, { "CloneName", "FB_Logic" } },
+                new Dictionary<string, string> { { "Status", "source-blocked-current-only" }, { "CurrentName", "Main_Safety_RTG1" } },
+                new Dictionary<string, string> { { "Status", "source-blocked-current-only" }, { "CurrentName", "SAFETY_COMMON" } },
+            };
+            List<Dictionary<string, string>> emptyReport = new List<Dictionary<string, string>>();
+
+            // Pre-existing LAD / F_LAD blocks that the clone never tracked must not gate the command.
+            EnsureNoSourceBlockersForWrite("apply-clone", rows);
+            AssertTrue(BlockingSourceBlockerCount(rows, emptyReport) == 0,
+                "current-only visual blockers must not count as blocking source blockers");
+
+            // A clone-tracked block that regressed to a visual language still blocks.
+            rows.Add(new Dictionary<string, string> { { "Status", "source-blocked-language-converted" }, { "CloneName", "FB_Was_Scl" } });
+            AssertTrue(BlockingSourceBlockerCount(rows, emptyReport) == 1,
+                "a clone-tracked block converted to a visual language must count as blocking");
+            bool threw = false;
+            try
+            {
+                EnsureNoSourceBlockersForWrite("apply-clone", rows);
+            }
+            catch (InvalidOperationException)
+            {
+                threw = true;
+            }
+            AssertTrue(threw, "a clone-tracked block converted to LAD/FBD/GRAPH must still block apply-clone");
         }
 
         private static void SelfTestApplyCloneGatesFinalDuplicateNumber(string caseDir)

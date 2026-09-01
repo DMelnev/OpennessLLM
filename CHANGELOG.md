@@ -2,6 +2,18 @@
 
 All notable changes to OpennessLLM are recorded in this file.
 
+## Unreleased
+
+- Scoped the `apply-clone` / `sync-clone` source-blocker gate to blocks the
+  clone actually tracks (`source-blocked-language-converted`,
+  `source-blocked-export-error`). A block that exists only in the live project
+  in an unsupported language (`source-blocked-current-only`) is still reported
+  in `clone-check-source-blockers.csv` but no longer blocks the whole command,
+  so STL/SCL edits remain possible on projects that keep LAD / F_LAD blocks.
+- Added the offline regression test
+  `apply-clone-gates-untracked-visual-block-allowed`.
+- Verification result: `self-test` passed `29/29`.
+
 ## 0.12.3 - 2026-08-27
 
 - Prepared a sanitized public distribution without project-specific network,
