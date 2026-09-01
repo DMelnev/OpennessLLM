@@ -275,20 +275,34 @@ Instance DB с опасной сменой InstanceOfName;
 source text не соответствует ожидаемому типу.
 ```
 
-`apply-clone` и `sync-clone` блокируют real write, если source blocker относится
-к блоку, который **отслеживается клоном**:
+Классификация «блокирует ли source blocker запись» — одна общая функция
+(`SourceBlockedStatusBlocksWrite`), которую используют все pre-write gate,
+after-write проверка, formatting-reconciliation, `status` / `check-all`,
+`init-workspace` и отчёт `clone-check-source-blockers.csv`. Их вердикты не могут
+разойтись.
+
+**Всегда блокируют (fail closed):**
 
 ```text
 source-blocked-language-converted   блок был STL/SCL в клоне, стал LAD/FBD/GRAPH в TIA;
-source-blocked-export-error         source export отслеживаемого блока не удался.
+source-blocked-export-error         source export отслеживаемого блока не удался;
+любой неизвестный source-blocked-*  новые/незнакомые статусы блокируют по умолчанию.
 ```
 
-Блок со статусом `source-blocked-current-only` (существует только в live-проекте
-на неподдерживаемом языке, в клон никогда не входил) в план apply/sync не
-попадает: отбор строк его исключает, а `sync-clone` помечает `skipped`. Такой
-блок пишется в `clone-check-source-blockers.csv` для информации и **не**
-блокирует команду. Это позволяет вести STL/SCL-правки в проектах, где рядом
-штатно живут LAD / F_LAD блоки (например fail-safe).
+**`source-blocked-current-only`** (блок есть только в live-проекте на
+неподдерживаемом языке) — информационный **только если** нет строки `removed`,
+которая может быть тем же блоком: совпадает номер (number space + number) **или**
+имя. Пары, которые всё ещё блокируют:
+
+- отслеживаемый блок переименован/перенумерован до конвертации в visual —
+  старая clone-запись `removed`, live-блок `source-blocked-current-only`;
+- коллизия номера между новым clone-only блоком и live visual-блоком;
+- «забыл сначала удалить LAD-блок» при замене его на SCL.
+
+Несопоставимые pre-existing LAD / F_LAD блоки (fail-safe и т.п.) не блокируют —
+это позволяет вести STL/SCL-правки в таких проектах. В
+`clone-check-source-blockers.csv` они идут с `Severity=warning`, блокирующие —
+с `Severity=error`.
 
 Регрессия интерфейса (LAD-вызыватель ломается из-за смены сигнатуры
 изменённого SCL-блока) ловится на `compile-all`, который workflow гоняет после

@@ -4,15 +4,28 @@ All notable changes to OpennessLLM are recorded in this file.
 
 ## Unreleased
 
-- Scoped the `apply-clone` / `sync-clone` source-blocker gate to blocks the
-  clone actually tracks (`source-blocked-language-converted`,
-  `source-blocked-export-error`). A block that exists only in the live project
-  in an unsupported language (`source-blocked-current-only`) is still reported
-  in `clone-check-source-blockers.csv` but no longer blocks the whole command,
-  so STL/SCL edits remain possible on projects that keep LAD / F_LAD blocks.
-- Added the offline regression test
-  `apply-clone-gates-untracked-visual-block-allowed`.
-- Verification result: `self-test` passed `29/29`.
+- Source-blocker write classification is now a single shared helper
+  (`SourceBlockedStatusBlocksWrite` / `BlockingSourceBlockedRows` /
+  `BlockingSourceBlockerCount`) used by every pre-write gate, the after-write
+  verification, the formatting-reconciliation pass, `status` / `check-all`,
+  `init-workspace`, and `clone-check-source-blockers.csv`. These paths can no
+  longer disagree about whether the project is writable.
+- A `source-blocked-*` row blocks `apply-clone` / `sync-clone` unless it is
+  `source-blocked-current-only` **and** no `removed` clone row could be the same
+  block (same block number, or same name). `source-blocked-language-converted`,
+  `source-blocked-export-error`, and any unknown `source-blocked-*` status fail
+  closed (always block). This keeps STL/SCL edits possible on projects that keep
+  pre-existing LAD / F_LAD blocks, while still blocking a tracked block that was
+  renamed/renumbered before conversion, a number collision with a new clone-only
+  block, and "forgot to delete the visual block first".
+- `clone-check-source-blockers.csv` emits `Severity=warning` for a non-blocking
+  `source-blocked-current-only` row and `Severity=error` for blocking rows.
+- `status` / `check-all` report a separate `informationalSourceBlockers` count
+  and no longer mark `ReadyForApply=no` for non-blocking source blockers.
+- Added offline regression tests `source-blocker-classification-shared`,
+  `source-blocker-report-severity`, `source-blocker-after-write-and-sync`, and
+  `source-blocker-tracked-identity-change`.
+- Verification result: `self-test` passed `32/32`.
 
 ## 0.12.3 - 2026-08-27
 
