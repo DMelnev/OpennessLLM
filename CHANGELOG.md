@@ -11,21 +11,29 @@ All notable changes to OpennessLLM are recorded in this file.
   `init-workspace`, and `clone-check-source-blockers.csv`. These paths can no
   longer disagree about whether the project is writable.
 - A `source-blocked-*` row blocks `apply-clone` / `sync-clone` unless it is
-  `source-blocked-current-only` **and** no `removed` clone row could be the same
-  block (same block number, or same name). `source-blocked-language-converted`,
-  `source-blocked-export-error`, and any unknown `source-blocked-*` status fail
-  closed (always block). This keeps STL/SCL edits possible on projects that keep
-  pre-existing LAD / F_LAD blocks, while still blocking a tracked block that was
-  renamed/renumbered before conversion, a number collision with a new clone-only
-  block, and "forgot to delete the visual block first".
+  `source-blocked-current-only` **and** (a) no `removed` clone row could be the
+  same block by number or name, **and** (b) no `removed` clone row the clone
+  actually tracked (new `CloneProvenance` column: `manifest` vs `file-scan`)
+  shares its block number space. (b) fails closed on a tracked block that
+  changed both name and number before conversion. `source-blocked-language-converted`,
+  `source-blocked-export-error`, and any unknown `source-blocked-*` status always
+  block. A `removed` row for a loose hand-placed `_root` file (`file-scan`) is a
+  new clone-only block and does not by itself make an unrelated visual block
+  blocking.
+- `clone-check-blocks.csv` gains a `CloneProvenance` column.
+- `BlockingSourceBlockerCount` recomputes from the full block report AND
+  cross-checks `clone-check-source-blockers.csv` (`Severity=error` rows; older
+  reports without the column fail closed), taking the max — a partial or stale
+  main report can no longer hide a blocker.
 - `clone-check-source-blockers.csv` emits `Severity=warning` for a non-blocking
   `source-blocked-current-only` row and `Severity=error` for blocking rows.
 - `status` / `check-all` report a separate `informationalSourceBlockers` count
   and no longer mark `ReadyForApply=no` for non-blocking source blockers.
 - Added offline regression tests `source-blocker-classification-shared`,
-  `source-blocker-report-severity`, `source-blocker-after-write-and-sync`, and
-  `source-blocker-tracked-identity-change`.
-- Verification result: `self-test` passed `32/32`.
+  `source-blocker-report-severity`, `source-blocker-after-write-and-sync`,
+  `source-blocker-tracked-identity-change` (incl. both-name-and-number change),
+  and `source-blocker-report-cross-check`.
+- Verification result: `self-test` passed `33/33`.
 
 ## 0.12.3 - 2026-08-27
 
