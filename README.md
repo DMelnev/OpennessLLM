@@ -28,7 +28,11 @@ Current version: `0.12.3`. Created by `Zibitpnz`.
 The repository does not contain or redistribute Siemens DLLs, TIA Portal, or a
 TIA project. PublicAPI assemblies are discovered from the local installation at
 runtime. The tool is primarily developed against TIA Portal V21 and also
-recognizes the V20 PublicAPI layouts described in the changelog.
+recognizes the V20 PublicAPI layouts described in the changelog. It has also
+been field-validated end-to-end against TIA Portal V18 Update 5 on a real
+multi-week production engineering project (see the changelog's Unreleased
+entry); V18 resolves via the existing legacy PublicAPI path with no extra
+configuration.
 
 ## Safety
 

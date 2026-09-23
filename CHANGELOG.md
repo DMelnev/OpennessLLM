@@ -34,6 +34,11 @@ All notable changes to OpennessLLM are recorded in this file.
   `source-blocker-tracked-identity-change` (incl. both-name-and-number change),
   and `source-blocker-report-cross-check`.
 - Verification result: `self-test` passed `33/33`.
+- Field-validated end-to-end (`check-clone` / `apply-clone` / `compile-block` /
+  `sync-clone`) against TIA Portal V18 Update 5 on a real multi-week production
+  engineering project (PLC + HMI). The README's stated PublicAPI support
+  (primarily V21, also recognizes V20 layouts) predates this; V18 resolves via
+  the existing `default-project-version-legacy` path without extra configuration.
 
 ## 0.12.3 - 2026-08-27
 
