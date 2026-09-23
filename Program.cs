@@ -6417,7 +6417,7 @@ namespace OpennessLLM
             AddWorkspaceBlockerIf(blockers, StatusCount(blockRows, "Status", "moved-or-renamed"), "PLC blocks moved or renamed");
             AddWorkspaceBlockerIf(blockers, StatusCount(blockRows, "Status", "moved-or-renamed-and-changed"), "PLC blocks moved/renamed and changed");
             AddWorkspaceBlockerIf(blockers, StatusCount(blockRows, "Status", "export-error"), "PLC export errors");
-            AddWorkspaceBlockerIf(blockers, Math.Max(StatusPrefixCount(blockRows, "Status", "source-blocked-"), sourceBlockers.Count), "PLC source blockers");
+            AddWorkspaceBlockerIf(blockers, BlockingSourceBlockerCount(blockRows, sourceBlockers), "PLC source blockers");
             AddWorkspaceBlockerIf(blockers, StatusCount(groupRows, "Status", "added"), "PLC block groups added");
             AddWorkspaceBlockerIf(blockers, StatusCount(groupRows, "Status", "removed"), "PLC block groups removed");
             return blockers;
@@ -6708,13 +6708,15 @@ namespace OpennessLLM
             int moved = StatusCount(blockRows, "Status", "moved-or-renamed");
             int movedChanged = StatusCount(blockRows, "Status", "moved-or-renamed-and-changed");
             int exportErrors = StatusCount(blockRows, "Status", "export-error");
-            int sourceBlockers = Math.Max(StatusPrefixCount(blockRows, "Status", "source-blocked-"), sourceBlockerRows.Count);
+            int sourceBlockers = BlockingSourceBlockerCount(blockRows, sourceBlockerRows);
+            int informationalSourceBlockers = InformationalSourceBlockerCount(blockRows);
             int groupAdded = StatusCount(groupRows, "Status", "added");
             int groupRemoved = StatusCount(groupRows, "Status", "removed");
             int dirtyRows = changed + added + removed + moved + movedChanged + exportErrors + sourceBlockers + groupAdded + groupRemoved;
 
             AddToolStatusCount(layer, "dirtyRows", dirtyRows);
             AddToolStatusCount(layer, "sourceBlockers", sourceBlockers);
+            AddToolStatusCount(layer, "informationalSourceBlockers", informationalSourceBlockers);
             AddToolStatusBlockerIf(layer, changed, "PLC changed blocks");
             AddToolStatusBlockerIf(layer, added, "PLC blocks added in TIA");
             AddToolStatusBlockerIf(layer, removed, "PLC blocks removed from TIA");
@@ -6826,6 +6828,11 @@ namespace OpennessLLM
             if (ToolStatusCount(layer, "sourceBlockers") > 0)
             {
                 writer.WriteLine("  Source blockers: " + ToolStatusCount(layer, "sourceBlockers"));
+            }
+
+            if (ToolStatusCount(layer, "informationalSourceBlockers") > 0)
+            {
+                writer.WriteLine("  Informational source blockers (non-blocking): " + ToolStatusCount(layer, "informationalSourceBlockers"));
             }
 
             writer.WriteLine("  Report: " + EmptyIfNull(layer.ReportPath));
@@ -13568,7 +13575,7 @@ namespace OpennessLLM
                     "CloneProgrammingLanguage", "CloneBlockType", "CloneTypeName", "CloneSourceTypeName",
                     "CloneInstanceOfName", "CloneInstanceOfNumber", "CloneInstanceOfType", "CloneSecondaryType",
                     "CloneMemoryLayout", "CloneIsConsistent", "CloneIsKnowHowProtected", "CloneTiaObjectId", "CloneTiaObjectIdStatus",
-                    "CloneSourceSha256", "CloneNormalizedSourceSha256", "CloneRelativePath", "ClonePath",
+                    "CloneSourceSha256", "CloneNormalizedSourceSha256", "CloneRelativePath", "ClonePath", "CloneProvenance",
                     "CurrentGroupPath", "CurrentGroupPathDisplay", "CurrentGroupPathKey", "CurrentName", "CurrentNumber", "CurrentAutoNumber", "CurrentNumberMode", "CurrentNumberSpace",
                     "CurrentProgrammingLanguage", "CurrentBlockType", "CurrentTypeName", "CurrentSourceTypeName",
                     "CurrentInstanceOfName", "CurrentInstanceOfNumber", "CurrentInstanceOfType", "CurrentSecondaryType",
@@ -13587,7 +13594,7 @@ namespace OpennessLLM
                     x.CloneProgrammingLanguage, x.CloneBlockType, x.CloneTypeName, x.CloneSourceTypeName,
                     x.CloneInstanceOfName, x.CloneInstanceOfNumber, x.CloneInstanceOfType, x.CloneSecondaryType,
                     x.CloneMemoryLayout, x.CloneIsConsistent, x.CloneIsKnowHowProtected, x.CloneTiaObjectId, x.CloneTiaObjectIdStatus,
-                    x.CloneSourceSha256, x.CloneNormalizedSourceSha256, x.CloneRelativePath, x.ClonePath,
+                    x.CloneSourceSha256, x.CloneNormalizedSourceSha256, x.CloneRelativePath, x.ClonePath, x.CloneProvenance,
                     x.CurrentGroupPath, x.CurrentGroupPathDisplay, x.CurrentGroupPath, x.CurrentName, x.CurrentNumber, x.CurrentAutoNumber, x.CurrentNumberMode, x.CurrentNumberSpace,
                     x.CurrentProgrammingLanguage, x.CurrentBlockType, x.CurrentTypeName, x.CurrentSourceTypeName,
                     x.CurrentInstanceOfName, x.CurrentInstanceOfNumber, x.CurrentInstanceOfType, x.CurrentSecondaryType,
@@ -13617,7 +13624,7 @@ namespace OpennessLLM
             PrintDiffCount("Block moved/renamed", blockDiffs, "moved-or-renamed");
             PrintDiffCount("Block moved/renamed and changed", blockDiffs, "moved-or-renamed-and-changed");
             PrintDiffCount("Block export errors", blockDiffs, "export-error");
-            Console.WriteLine("Source blockers: " + blockDiffs.Count(IsSourceBlockedDiff));
+            Console.WriteLine("Source blockers (blocking / total): " + BlockingSourceBlockedDiffCount(blockDiffs) + " / " + blockDiffs.Count(IsSourceBlockedDiff));
             PrintGroupDiffCount("Group unchanged", groupDiffs, "unchanged");
             PrintGroupDiffCount("Group added", groupDiffs, "added");
             PrintGroupDiffCount("Group removed", groupDiffs, "removed");
@@ -13896,6 +13903,7 @@ namespace OpennessLLM
                 CloneNormalizedSourceSha256 = clone == null ? string.Empty : clone.NormalizedSourceSha256,
                 CloneRelativePath = clone == null ? string.Empty : clone.RelativePath,
                 ClonePath = clone == null ? (current == null ? string.Empty : current.ClonePath) : clone.ClonePath,
+                CloneProvenance = clone == null ? string.Empty : EmptyIfNull(clone.Provenance),
                 CurrentGroupPath = current == null ? string.Empty : EmptyIfNull(current.GroupPath),
                 CurrentGroupPathDisplay = current == null ? string.Empty : GroupPathDisplay(current.GroupPath),
                 CurrentName = current == null ? string.Empty : current.Name,
@@ -13997,14 +14005,31 @@ namespace OpennessLLM
                 writer.WriteLine("PLC blocks in clone manifest: " + cloneBlocks.Count);
                 writer.WriteLine("PLC blocks in current TIA project: " + currentBlocks.Count);
                 WriteStatusCounts(writer, "Block", blockDiffs.Select(x => x.Status));
-                writer.WriteLine("Source blockers: " + blockDiffs.Count(IsSourceBlockedDiff));
+                writer.WriteLine("Source blockers (blocking / total): " + BlockingSourceBlockedDiffCount(blockDiffs) + " / " + blockDiffs.Count(IsSourceBlockedDiff));
                 writer.WriteLine();
                 WriteStatusCounts(writer, "Group", groupDiffs.Select(x => x.Status));
             }
         }
 
+        private static List<RemovedCloneRef> RemovedCloneRefsFromDiffs(List<CloneDiffRecord> blockDiffs)
+        {
+            return blockDiffs
+                .Where(d => d != null && EqualsIgnoreCase(d.Status, "removed"))
+                .Select(d => new RemovedCloneRef
+                {
+                    Key = new BlockKey(
+                        FirstNonEmpty(d.CloneNumberSpace, d.NumberSpace),
+                        FirstNonEmpty(d.CloneNumber, d.Number),
+                        FirstNonEmpty(d.CloneName, d.Name)),
+                    FromManifest = !EqualsIgnoreCase(d.CloneProvenance, "file-scan"),
+                })
+                .ToList();
+        }
+
         private static void WriteCloneCheckSourceBlockerReport(string path, List<CloneDiffRecord> blockDiffs)
         {
+            List<RemovedCloneRef> removedCloneKeys = RemovedCloneRefsFromDiffs(blockDiffs);
+
             WriteCsv(path,
                 new[] { "Severity", "Code", "Status", "GroupPath", "Name", "NumberSpace", "Number", "CloneLanguage", "CurrentLanguage", "ClonePath", "CurrentPath", "Action", "Message" },
                 blockDiffs
@@ -14014,7 +14039,13 @@ namespace OpennessLLM
                     .ThenBy(x => x.Name)
                     .Select(x => new[]
                     {
-                        "error",
+                        SourceBlockedStatusBlocksWrite(
+                            x.Status,
+                            new BlockKey(
+                                FirstNonEmpty(x.CurrentNumberSpace, x.NumberSpace),
+                                FirstNonEmpty(x.CurrentNumber, x.Number),
+                                FirstNonEmpty(x.CurrentName, x.Name)),
+                            removedCloneKeys) ? "error" : "warning",
                         SourceBlockerCode(x),
                         x.Status,
                         x.GroupPath,
@@ -14035,10 +14066,227 @@ namespace OpennessLLM
             return diff != null && IsSourceBlockedStatus(diff.Status);
         }
 
+        private static int BlockingSourceBlockedDiffCount(List<CloneDiffRecord> blockDiffs)
+        {
+            if (blockDiffs == null)
+            {
+                return 0;
+            }
+
+            List<RemovedCloneRef> removed = RemovedCloneRefsFromDiffs(blockDiffs);
+            return blockDiffs.Count(d => IsSourceBlockedDiff(d)
+                && SourceBlockedStatusBlocksWrite(
+                    d.Status,
+                    new BlockKey(
+                        FirstNonEmpty(d.CurrentNumberSpace, d.NumberSpace),
+                        FirstNonEmpty(d.CurrentNumber, d.Number),
+                        FirstNonEmpty(d.CurrentName, d.Name)),
+                    removed));
+        }
+
         private static bool IsSourceBlockedStatus(string status)
         {
             return !string.IsNullOrWhiteSpace(status)
                 && status.StartsWith("source-blocked-", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // ---- source-blocker write classification: single source of truth ------
+        //
+        // A "source-blocked-*" clone-check row blocks apply-clone / sync-clone
+        // writes UNLESS it is a pre-existing visual / fail-safe block that the
+        // source clone genuinely never tracked and that no pending clone
+        // operation could refer to. Every pre-write gate, the after-write
+        // verification, the formatting-reconciliation pass, `status` / `check-all`,
+        // `init-workspace`, and the dedicated report use the helpers below so
+        // their verdicts cannot disagree.
+        //
+        // Fail closed: only "source-blocked-current-only" is ever a candidate for
+        // "informational". "source-blocked-language-converted",
+        // "source-blocked-export-error", and any future / unknown
+        // "source-blocked-*" status always block.
+        //
+        // "Never tracked" is NOT proven by `clone == null` alone: a once-tracked
+        // block can lose its clone match after a path/name/number change. A
+        // "source-blocked-current-only" row is treated as informational only when
+        // BOTH hold:
+        //   1. no "removed" clone row could be the same block by number or name, AND
+        //   2. no "removed" clone row that the clone actually tracked
+        //      (Provenance = manifest) shares its block number space.
+        // (2) fails closed on the ambiguous case where a tracked block changed
+        // both name and number before conversion. A "removed" row for a loose
+        // hand-placed _root file (Provenance = file-scan) is a new clone-only
+        // block and does not, by itself, make an unrelated visual block blocking.
+
+        private struct BlockKey
+        {
+            public string NumberSpace;
+            public string Number;
+            public string Name;
+
+            public BlockKey(string numberSpace, string number, string name)
+            {
+                NumberSpace = EmptyIfNull(numberSpace).Trim();
+                Number = EmptyIfNull(number).Trim();
+                Name = EmptyIfNull(name).Trim();
+            }
+
+            public bool CouldBeSameBlockAs(BlockKey other)
+            {
+                bool numberMatch = NumberSpace.Length > 0 && Number.Length > 0
+                    && EqualsIgnoreCase(NumberSpace, other.NumberSpace)
+                    && EqualsIgnoreCase(Number, other.Number);
+                bool nameMatch = Name.Length > 0 && EqualsIgnoreCase(Name, other.Name);
+                return numberMatch || nameMatch;
+            }
+        }
+
+        private struct RemovedCloneRef
+        {
+            public BlockKey Key;
+            public bool FromManifest;
+        }
+
+        private static bool IsInformationalSourceBlockedCandidate(string status)
+        {
+            return EqualsIgnoreCase(status, "source-blocked-current-only");
+        }
+
+        private static List<RemovedCloneRef> RemovedCloneRefs(List<Dictionary<string, string>> blockRows)
+        {
+            List<RemovedCloneRef> refs = new List<RemovedCloneRef>();
+            if (blockRows == null)
+            {
+                return refs;
+            }
+
+            foreach (Dictionary<string, string> row in blockRows)
+            {
+                if (!EqualsIgnoreCase(GetCsvValue(row, "Status"), "removed"))
+                {
+                    continue;
+                }
+
+                string provenance = GetCsvValue(row, "CloneProvenance");
+                refs.Add(new RemovedCloneRef
+                {
+                    Key = new BlockKey(
+                        FirstNonEmpty(GetCsvValue(row, "CloneNumberSpace"), GetCsvValue(row, "NumberSpace")),
+                        FirstNonEmpty(GetCsvValue(row, "CloneNumber"), GetCsvValue(row, "Number")),
+                        FirstNonEmpty(GetCsvValue(row, "CloneName"), GetCsvValue(row, "Name"))),
+                    // Unknown/blank provenance (older report) fails closed as "tracked".
+                    FromManifest = !EqualsIgnoreCase(provenance, "file-scan"),
+                });
+            }
+
+            return refs;
+        }
+
+        private static bool SourceBlockedStatusBlocksWrite(string status, BlockKey liveKey, List<RemovedCloneRef> removed)
+        {
+            if (!IsSourceBlockedStatus(status))
+            {
+                return false;
+            }
+
+            if (!IsInformationalSourceBlockedCandidate(status))
+            {
+                return true;
+            }
+
+            if (removed != null)
+            {
+                foreach (RemovedCloneRef r in removed)
+                {
+                    if (liveKey.CouldBeSameBlockAs(r.Key))
+                    {
+                        return true;
+                    }
+
+                    if (r.FromManifest
+                        && liveKey.NumberSpace.Length > 0
+                        && EqualsIgnoreCase(liveKey.NumberSpace, r.Key.NumberSpace))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static List<Dictionary<string, string>> BlockingSourceBlockedRows(List<Dictionary<string, string>> blockRows)
+        {
+            List<Dictionary<string, string>> blocking = new List<Dictionary<string, string>>();
+            if (blockRows == null)
+            {
+                return blocking;
+            }
+
+            List<RemovedCloneRef> removed = RemovedCloneRefs(blockRows);
+            foreach (Dictionary<string, string> row in blockRows)
+            {
+                string status = GetCsvValue(row, "Status");
+                if (!IsSourceBlockedStatus(status))
+                {
+                    continue;
+                }
+
+                BlockKey liveKey = new BlockKey(
+                    FirstNonEmpty(GetCsvValue(row, "CurrentNumberSpace"), GetCsvValue(row, "NumberSpace")),
+                    FirstNonEmpty(GetCsvValue(row, "CurrentNumber"), GetCsvValue(row, "Number")),
+                    FirstNonEmpty(GetCsvValue(row, "CurrentName"), GetCsvValue(row, "Name")));
+                if (SourceBlockedStatusBlocksWrite(status, liveKey, removed))
+                {
+                    blocking.Add(row);
+                }
+            }
+
+            return blocking;
+        }
+
+        // The dedicated clone-check-source-blockers.csv report is written next to
+        // clone-check-blocks.csv from the same check-clone run and carries a
+        // Severity column ("error" for blocking rows). We recompute from the full
+        // block report AND cross-check the dedicated report, then fail closed on
+        // any disagreement, so a partial or stale main report cannot hide a real
+        // blocker.
+        private static int DedicatedReportBlockerCount(List<Dictionary<string, string>> sourceBlockerRows)
+        {
+            if (sourceBlockerRows == null || sourceBlockerRows.Count == 0)
+            {
+                return 0;
+            }
+
+            bool hasSeverity = sourceBlockerRows.Any(x => x.ContainsKey("Severity"));
+            if (!hasSeverity)
+            {
+                // Older report format without severity: fail closed on every row.
+                return sourceBlockerRows.Count(x => IsSourceBlockedStatus(GetCsvValue(x, "Status")));
+            }
+
+            return sourceBlockerRows.Count(x =>
+                IsSourceBlockedStatus(GetCsvValue(x, "Status"))
+                && EqualsIgnoreCase(GetCsvValue(x, "Severity"), "error"));
+        }
+
+        private static int BlockingSourceBlockerCount(
+            List<Dictionary<string, string>> blockRows,
+            List<Dictionary<string, string>> sourceBlockerRows)
+        {
+            int fromBlocks = BlockingSourceBlockedRows(blockRows).Count;
+            int fromReport = DedicatedReportBlockerCount(sourceBlockerRows);
+            return Math.Max(fromBlocks, fromReport);
+        }
+
+        private static int InformationalSourceBlockerCount(List<Dictionary<string, string>> blockRows)
+        {
+            if (blockRows == null)
+            {
+                return 0;
+            }
+
+            int total = blockRows.Count(x => IsSourceBlockedStatus(GetCsvValue(x, "Status")));
+            return total - BlockingSourceBlockedRows(blockRows).Count;
         }
 
         private static string SourceBlockerCode(CloneDiffRecord diff)
@@ -14073,9 +14321,7 @@ namespace OpennessLLM
 
         private static void EnsureNoSourceBlockersForWrite(string commandName, List<Dictionary<string, string>> blockRows)
         {
-            List<Dictionary<string, string>> blockers = blockRows
-                .Where(x => IsSourceBlockedStatus(GetCsvValue(x, "Status")))
-                .ToList();
+            List<Dictionary<string, string>> blockers = BlockingSourceBlockedRows(blockRows);
             if (blockers.Count == 0)
             {
                 return;
@@ -14084,7 +14330,7 @@ namespace OpennessLLM
             string first = blockers
                 .Select(x => FirstNonEmpty(GetCsvValue(x, "CurrentName"), GetCsvValue(x, "CloneName"), GetCsvValue(x, "Name")))
                 .FirstOrDefault();
-            throw new InvalidOperationException(commandName + " is blocked because the latest check-clone report contains " + blockers.Count + " source-blocked block(s). First blocker: " + first + ". Convert unsupported LAD/FBD/GRAPH blocks to STL/SCL in TIA, compile, and run check-clone again. See CLONE_PROJECT\\clone-check-source-blockers.csv.");
+            throw new InvalidOperationException(commandName + " is blocked because the latest check-clone report contains " + blockers.Count + " blocking source-blocked block(s) (Severity=error in clone-check-source-blockers.csv). First blocker: " + first + ". Cause is one of: a clone-tracked block was converted to LAD/FBD/GRAPH; a clone-tracked block failed source export; a current-only visual block shares a number/name with a removed clone row; or a clone-tracked block of the same number space went missing while an unmatched visual block is present (ambiguous - it may be the same block renamed and renumbered). Resolve in TIA (convert the block back to STL/SCL, delete the visual block before adding its replacement), or - if a clone-tracked block was intentionally removed and the visual block is unrelated - delete that block's stale source file from CLONE_PROJECT\\_root, then run check-clone again. Pre-existing LAD/F_LAD blocks that were never in CLONE_PROJECT and match no pending clone operation are informational only. See CLONE_PROJECT\\clone-check-source-blockers.csv.");
         }
 
         private static void WriteStatusCounts(StreamWriter writer, string label, IEnumerable<string> statuses)
@@ -16103,7 +16349,7 @@ namespace OpennessLLM
 
             List<Dictionary<string, string>> allRows = ReadCsv(blockReportPath);
             List<Dictionary<string, string>> sourceBlockerRows = ReadCsvIfExists(sourceBlockerReportPath);
-            int sourceBlockerCount = Math.Max(StatusPrefixCount(allRows, "Status", "source-blocked-"), sourceBlockerRows.Count);
+            int sourceBlockerCount = BlockingSourceBlockerCount(allRows, sourceBlockerRows);
             AddApplyCloneGate(
                 gates,
                 "before-write",
@@ -16272,7 +16518,7 @@ namespace OpennessLLM
                 List<Dictionary<string, string>> afterRows = ReadCsvIfExists(afterBlockReportPath);
                 List<Dictionary<string, string>> afterSourceBlockers = ReadCsvIfExists(afterSourceBlockerReportPath);
                 int dirtyRows = ApplyCloneDirtyRowCount(afterRows);
-                int afterSourceBlockerCount = Math.Max(StatusPrefixCount(afterRows, "Status", "source-blocked-"), afterSourceBlockers.Count);
+                int afterSourceBlockerCount = BlockingSourceBlockerCount(afterRows, afterSourceBlockers);
                 List<Dictionary<string, string>> formattingOnlyRows = ApplyCloneFormattingOnlyDirtyRows(afterRows, plan, rootDir);
                 int unexpectedDirtyRows = dirtyRows - formattingOnlyRows.Count;
                 if (afterSourceBlockerCount == 0 && unexpectedDirtyRows == 0 && formattingOnlyRows.Count > 0)
@@ -16308,7 +16554,7 @@ namespace OpennessLLM
                     afterRows = ReadCsvIfExists(afterBlockReportPath);
                     afterSourceBlockers = ReadCsvIfExists(afterSourceBlockerReportPath);
                     dirtyRows = ApplyCloneDirtyRowCount(afterRows);
-                    afterSourceBlockerCount = Math.Max(StatusPrefixCount(afterRows, "Status", "source-blocked-"), afterSourceBlockers.Count);
+                    afterSourceBlockerCount = BlockingSourceBlockerCount(afterRows, afterSourceBlockers);
                 }
 
                 afterCheckAccepted = afterRows.Count > 0 && dirtyRows == 0 && afterSourceBlockerCount == 0;
@@ -17547,7 +17793,26 @@ namespace OpennessLLM
 
         private static int ApplyCloneDirtyRowCount(List<Dictionary<string, string>> rows)
         {
-            return rows.Count(x => IsApplyCloneDirtyStatus(GetCsvValue(x, "Status")));
+            if (rows == null)
+            {
+                return 0;
+            }
+
+            List<RemovedCloneRef> removedCloneKeys = RemovedCloneRefs(rows);
+            return rows.Count(x =>
+            {
+                string status = GetCsvValue(x, "Status");
+                if (IsSourceBlockedStatus(status))
+                {
+                    BlockKey liveKey = new BlockKey(
+                        FirstNonEmpty(GetCsvValue(x, "CurrentNumberSpace"), GetCsvValue(x, "NumberSpace")),
+                        FirstNonEmpty(GetCsvValue(x, "CurrentNumber"), GetCsvValue(x, "Number")),
+                        FirstNonEmpty(GetCsvValue(x, "CurrentName"), GetCsvValue(x, "Name")));
+                    return SourceBlockedStatusBlocksWrite(status, liveKey, removedCloneKeys);
+                }
+
+                return IsApplyCloneDirtyStatus(status);
+            });
         }
 
         private static List<Dictionary<string, string>> ApplyCloneFormattingOnlyDirtyRows(List<Dictionary<string, string>> rows, List<ApplyPlanItem> plan, string rootDir)
@@ -19834,7 +20099,8 @@ namespace OpennessLLM
                         ClonePath = clonePath,
                         CurrentPath = string.Empty,
                         ExportStatus = GetCsvValue(row, "Status"),
-                        ExportMessage = GetCsvValue(row, "Message")
+                        ExportMessage = GetCsvValue(row, "Message"),
+                        Provenance = "manifest"
                     });
                 }
             }
@@ -19917,7 +20183,8 @@ namespace OpennessLLM
                 ClonePath = file,
                 CurrentPath = string.Empty,
                 ExportStatus = "ok",
-                ExportMessage = message
+                ExportMessage = message,
+                Provenance = "file-scan"
             };
         }
 
@@ -20969,6 +21236,11 @@ namespace OpennessLLM
             RunSelfTestCase(results, outDir, "apply-clone-gates-final-duplicate-number", SelfTestApplyCloneGatesFinalDuplicateNumber);
             RunSelfTestCase(results, outDir, "apply-clone-gates-delete-fb-instance-db", SelfTestApplyCloneGatesDeleteFbInstanceDb);
             RunSelfTestCase(results, outDir, "apply-clone-gates-visual-unverified-real-apply", SelfTestApplyCloneGatesVisualUnverifiedRealApply);
+            RunSelfTestCase(results, outDir, "source-blocker-classification-shared", SelfTestSourceBlockerClassificationShared);
+            RunSelfTestCase(results, outDir, "source-blocker-report-severity", SelfTestSourceBlockerReportSeverity);
+            RunSelfTestCase(results, outDir, "source-blocker-after-write-and-sync", SelfTestSourceBlockerAfterWriteAndSync);
+            RunSelfTestCase(results, outDir, "source-blocker-tracked-identity-change", SelfTestSourceBlockerTrackedIdentityChange);
+            RunSelfTestCase(results, outDir, "source-blocker-report-cross-check", SelfTestSourceBlockerReportCrossCheck);
             RunSelfTestCase(results, outDir, "apply-clone-canonical-source-formatting", SelfTestApplyCloneCanonicalSourceFormatting);
 
             WriteSelfTestReports(outDir, results);
@@ -21686,6 +21958,249 @@ namespace OpennessLLM
 
             ApplyPreflightResult result = RunApplyClonePreflight(new List<ApplyPlanItem> { item }, snapshot, rootDir, false);
             AssertTrue(result.Issues.Any(x => EqualsIgnoreCase(x.Code, "GROUP_CHANGE_FORBIDDEN")), "Clone-side group move should be forbidden.");
+        }
+
+        private static Dictionary<string, string> SourceBlockerTestRow(string status, string numberSpace, string number, string name)
+        {
+            // A "removed" row defaults to manifest provenance (a block the clone
+            // tracked); use the 5-arg overload for a loose hand-placed file.
+            return SourceBlockerTestRow(status, numberSpace, number, name,
+                EqualsIgnoreCase(status, "removed") ? "manifest" : string.Empty);
+        }
+
+        private static Dictionary<string, string> SourceBlockerTestRow(string status, string numberSpace, string number, string name, string cloneProvenance)
+        {
+            bool removed = EqualsIgnoreCase(status, "removed");
+            return new Dictionary<string, string>
+            {
+                { "Status", status },
+                { "NumberSpace", numberSpace },
+                { "Number", number },
+                { "Name", name },
+                { "CurrentNumberSpace", removed ? string.Empty : numberSpace },
+                { "CurrentNumber", removed ? string.Empty : number },
+                { "CurrentName", removed ? string.Empty : name },
+                { "CloneNumberSpace", removed ? numberSpace : string.Empty },
+                { "CloneNumber", removed ? number : string.Empty },
+                { "CloneName", removed ? name : string.Empty },
+                { "CloneProvenance", cloneProvenance },
+            };
+        }
+
+        private static bool SourceBlockerGateThrows(string commandName, List<Dictionary<string, string>> rows)
+        {
+            try
+            {
+                EnsureNoSourceBlockersForWrite(commandName, rows);
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+        }
+
+        private static void SelfTestSourceBlockerClassificationShared(string caseDir)
+        {
+            List<Dictionary<string, string>> noReport = new List<Dictionary<string, string>>();
+
+            // Pure fail-safe project: pre-existing F_LAD/LAD blocks the clone never
+            // tracked, plus one unrelated changed SCL block. Nothing blocks.
+            List<Dictionary<string, string>> failSafe = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("changed", "FB", "10", "FB_Logic"),
+                SourceBlockerTestRow("source-blocked-current-only", "OB", "1", "Main"),
+                SourceBlockerTestRow("source-blocked-current-only", "FB", "1", "Main_Safety_RTG1"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "6", "SAFETY_COMMON"),
+            };
+            EnsureNoSourceBlockersForWrite("apply-clone", failSafe);
+            AssertTrue(BlockingSourceBlockerCount(failSafe, noReport) == 0, "fail-safe current-only rows must not block");
+            AssertTrue(InformationalSourceBlockerCount(failSafe) == 3, "fail-safe current-only rows must be counted as informational");
+
+            // Both genuinely blocking statuses.
+            List<Dictionary<string, string>> converted = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("source-blocked-language-converted", "FB", "20", "FB_Was_Scl"),
+            };
+            AssertTrue(BlockingSourceBlockerCount(converted, noReport) == 1, "language-converted must block");
+            AssertTrue(SourceBlockerGateThrows("apply-clone", converted), "language-converted must throw the gate");
+
+            List<Dictionary<string, string>> exportErr = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("source-blocked-export-error", "FC", "7", "FC_Broken"),
+            };
+            AssertTrue(BlockingSourceBlockerCount(exportErr, noReport) == 1, "export-error must block");
+
+            // Fail closed: an unknown future source-blocked-* status still blocks.
+            List<Dictionary<string, string>> unknown = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("source-blocked-future-reason", "FB", "30", "FB_New"),
+            };
+            AssertTrue(BlockingSourceBlockerCount(unknown, noReport) == 1, "unknown source-blocked-* status must fail closed (block)");
+            AssertTrue(SourceBlockerGateThrows("sync-clone", unknown), "unknown source-blocked-* status must throw the gate");
+
+            // Degraded input (only the dedicated report, no block report): fail closed.
+            List<Dictionary<string, string>> reportOnly = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "4", "KUKA_SAFETY_IO"),
+            };
+            AssertTrue(BlockingSourceBlockerCount(null, reportOnly) == 1, "with only the dedicated report available, count every source blocker");
+        }
+
+        private static void SelfTestSourceBlockerReportSeverity(string caseDir)
+        {
+            string reportPath = Path.Combine(caseDir, "clone-check-source-blockers.csv");
+            List<CloneDiffRecord> diffs = new List<CloneDiffRecord>
+            {
+                // informational: current-only, no matching removed clone record
+                CloneDiff("source-blocked-current-only", new CloneBlockRecord { Name = "Main_Safety_RTG1", Number = "1", NumberSpace = "FB", ProgrammingLanguage = "F_LAD" }, null, "current-only"),
+                // blocking: clone-tracked block converted to a visual language
+                CloneDiff("source-blocked-language-converted", new CloneBlockRecord { Name = "FB_Was_Scl", Number = "20", NumberSpace = "FB", ProgrammingLanguage = "LAD" }, new CloneBlockRecord { Name = "FB_Was_Scl", Number = "20", NumberSpace = "FB", ProgrammingLanguage = "SCL" }, "converted"),
+                // blocking: current-only that shares a number with a removed clone record
+                CloneDiff("source-blocked-current-only", new CloneBlockRecord { Name = "Time_Meter", Number = "31", NumberSpace = "FC", ProgrammingLanguage = "LAD" }, null, "current-only paired"),
+                CloneDiff("removed", null, new CloneBlockRecord { Name = "Time_Meter", Number = "31", NumberSpace = "FC", ProgrammingLanguage = "SCL" }, "removed clone record"),
+            };
+
+            WriteCloneCheckSourceBlockerReport(reportPath, diffs);
+            List<Dictionary<string, string>> rows = ReadCsv(reportPath);
+            AssertTrue(rows.Count == 3, "source blocker report lists the three source-blocked rows");
+
+            Dictionary<string, string> safety = rows.First(r => EqualsIgnoreCase(GetCsvValue(r, "Name"), "Main_Safety_RTG1"));
+            Dictionary<string, string> convertedRow = rows.First(r => EqualsIgnoreCase(GetCsvValue(r, "Name"), "FB_Was_Scl"));
+            Dictionary<string, string> pairedRow = rows.First(r => EqualsIgnoreCase(GetCsvValue(r, "Name"), "Time_Meter"));
+            AssertEqual("warning", GetCsvValue(safety, "Severity"), "unmatched fail-safe current-only row is a warning");
+            AssertEqual("error", GetCsvValue(convertedRow, "Severity"), "language-converted row is an error");
+            AssertEqual("error", GetCsvValue(pairedRow, "Severity"), "current-only row paired with a removed clone record is an error");
+        }
+
+        private static void SelfTestSourceBlockerAfterWriteAndSync(string caseDir)
+        {
+            // After-write verification for "changed SCL + current-only F_LAD": once
+            // the changed row is applied it reads back as unchanged, and the F_LAD
+            // current-only row must not make ApplyCloneDirtyRowCount or the source
+            // blocker count non-zero, so the after-clone-check gate can accept.
+            List<Dictionary<string, string>> afterRows = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("unchanged", "FB", "10", "FB_Logic"),
+                SourceBlockerTestRow("source-blocked-current-only", "FB", "1", "Main_Safety_RTG1"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "6", "SAFETY_COMMON"),
+            };
+            AssertTrue(ApplyCloneDirtyRowCount(afterRows) == 0, "unmatched current-only rows must not count as dirty after apply");
+            AssertTrue(BlockingSourceBlockerCount(afterRows, new List<Dictionary<string, string>>()) == 0, "unmatched current-only rows must not fail after-write source-blocker check");
+
+            // sync-clone must refuse when a current-only visual block collides with a
+            // removed clone record (silent-divergence guard).
+            List<Dictionary<string, string>> colliding = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "31", "Time_Meter"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "31", "Time_Meter"),
+            };
+            AssertTrue(SourceBlockerGateThrows("sync-clone", colliding), "sync-clone must refuse a current-only/removed collision");
+            AssertTrue(ApplyCloneDirtyRowCount(colliding) >= 1, "a colliding current-only row counts as dirty");
+
+            // A genuinely new clone-only block (loose _root file, file-scan
+            // provenance) plus an unrelated fail-safe block: the new block
+            // proceeds, the fail-safe block stays informational.
+            List<Dictionary<string, string>> newAndFailSafe = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "31", "Widget_New", "file-scan"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "4", "KUKA_SAFETY_IO"),
+            };
+            EnsureNoSourceBlockersForWrite("apply-clone", newAndFailSafe);
+            AssertTrue(BlockingSourceBlockerCount(newAndFailSafe, new List<Dictionary<string, string>>()) == 0, "new clone-only block must not be blocked by an unrelated fail-safe block");
+
+            // But a new clone-only file that reuses the number of a live visual
+            // block still fails closed (number collision).
+            List<Dictionary<string, string>> newCollidesNumber = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "4", "Widget_New", "file-scan"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "4", "KUKA_SAFETY_IO"),
+            };
+            AssertTrue(SourceBlockerGateThrows("apply-clone", newCollidesNumber), "a new clone-only block reusing a live visual block's number must block");
+        }
+
+        private static void SelfTestSourceBlockerTrackedIdentityChange(string caseDir)
+        {
+            // Tracked SCL block renamed in TIA (number kept) and converted to LAD.
+            List<Dictionary<string, string>> renamedKeptNumber = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "20", "FooBlock"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "20", "BarBlock"),
+            };
+            AssertTrue(SourceBlockerGateThrows("apply-clone", renamedKeptNumber), "renamed+converted tracked block (number kept) must block");
+
+            // Number changed, name kept -> paired by name.
+            List<Dictionary<string, string>> renumberedKeptName = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "20", "FooBlock"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "99", "FooBlock"),
+            };
+            AssertTrue(SourceBlockerGateThrows("apply-clone", renumberedKeptName), "renamed+converted tracked block (name kept) must block");
+
+            // BOTH name and number change: no name/number pairing, but the removed
+            // row is a manifest-tracked block of the same number space -> fail closed.
+            List<Dictionary<string, string>> renamedAndRenumbered = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FC", "20", "FooBlock"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "99", "BarBlock"),
+            };
+            AssertTrue(SourceBlockerGateThrows("apply-clone", renamedAndRenumbered), "tracked block with both name and number changed before visual conversion must fail closed");
+            AssertTrue(SourceBlockerGateThrows("sync-clone", renamedAndRenumbered), "sync-clone must also refuse the ambiguous set");
+
+            // A tracked block of a DIFFERENT number space that went missing does not
+            // make an unrelated fail-safe block blocking.
+            List<Dictionary<string, string>> differentSpace = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("removed", "FB", "20", "FooFb"),
+                SourceBlockerTestRow("source-blocked-current-only", "FC", "6", "SAFETY_COMMON"),
+            };
+            EnsureNoSourceBlockersForWrite("apply-clone", differentSpace);
+            AssertTrue(BlockingSourceBlockerCount(differentSpace, new List<Dictionary<string, string>>()) == 0, "a missing tracked block of a different number space must not block an unrelated fail-safe block");
+        }
+
+        private static void SelfTestSourceBlockerReportCrossCheck(string caseDir)
+        {
+            // The main block report looks benign (no source-blocked rows), but the
+            // dedicated report carries a Severity=error row: fail closed.
+            List<Dictionary<string, string>> benignBlockRows = new List<Dictionary<string, string>>
+            {
+                SourceBlockerTestRow("changed", "FB", "10", "FB_Logic"),
+                SourceBlockerTestRow("unchanged", "FC", "6", "SAFETY_COMMON"),
+            };
+            List<Dictionary<string, string>> dedicated = new List<Dictionary<string, string>>
+            {
+                new Dictionary<string, string>
+                {
+                    { "Severity", "error" }, { "Status", "source-blocked-language-converted" },
+                    { "Name", "FB_Was_Scl" }, { "NumberSpace", "FB" }, { "Number", "20" },
+                },
+            };
+            AssertTrue(BlockingSourceBlockerCount(benignBlockRows, dedicated) == 1,
+                "a Severity=error row in the dedicated report must be counted even when the main report looks benign");
+
+            // A dedicated report with only Severity=warning rows does not add a blocker.
+            List<Dictionary<string, string>> warningOnly = new List<Dictionary<string, string>>
+            {
+                new Dictionary<string, string>
+                {
+                    { "Severity", "warning" }, { "Status", "source-blocked-current-only" },
+                    { "Name", "Main_Safety_RTG1" }, { "NumberSpace", "FB" }, { "Number", "1" },
+                },
+            };
+            AssertTrue(BlockingSourceBlockerCount(benignBlockRows, warningOnly) == 0,
+                "a warning-only dedicated report must not add a blocker");
+
+            // A dedicated report with no Severity column (older format) fails closed.
+            List<Dictionary<string, string>> noSeverity = new List<Dictionary<string, string>>
+            {
+                new Dictionary<string, string>
+                {
+                    { "Status", "source-blocked-current-only" }, { "Name", "Legacy" },
+                    { "NumberSpace", "FC" }, { "Number", "5" },
+                },
+            };
+            AssertTrue(BlockingSourceBlockerCount(benignBlockRows, noSeverity) == 1,
+                "a dedicated report without a Severity column must fail closed");
         }
 
         private static void SelfTestApplyCloneGatesFinalDuplicateNumber(string caseDir)
@@ -24327,6 +24842,9 @@ namespace OpennessLLM
             public string CurrentPath;
             public string ExportStatus;
             public string ExportMessage;
+            // "manifest" when loaded from plc-blocks.csv (a block the clone has
+            // tracked), "file-scan" when discovered as a loose _root source file.
+            public string Provenance;
         }
 
         private sealed class CloneDiffRecord
@@ -24402,6 +24920,8 @@ namespace OpennessLLM
             public string CurrentNormalizedSourceSha256;
             public string CurrentRelativePath;
             public string CurrentPath;
+            // "manifest" / "file-scan" for the clone side of the diff.
+            public string CloneProvenance;
             public string Message;
         }
 
