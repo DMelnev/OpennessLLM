@@ -14108,14 +14108,16 @@ namespace OpennessLLM
         // "Never tracked" is NOT proven by `clone == null` alone: a once-tracked
         // block can lose its clone match after a path/name/number change. A
         // "source-blocked-current-only" row is treated as informational only when
-        // BOTH hold:
-        //   1. no "removed" clone row could be the same block by number or name, AND
-        //   2. no "removed" clone row that the clone actually tracked
-        //      (Provenance = manifest) shares its block number space.
-        // (2) fails closed on the ambiguous case where a tracked block changed
-        // both name and number before conversion. A "removed" row for a loose
-        // hand-placed _root file (Provenance = file-scan) is a new clone-only
-        // block and does not, by itself, make an unrelated visual block blocking.
+        // no "removed" clone row could be the same block by number or name
+        // (CouldBeSameBlockAs). Matching on number space alone (ignoring both
+        // name and number) was tried and reverted: in a real project with many
+        // blocks per number space, any unrelated block removed or moved
+        // elsewhere in that space would permanently block every fail-safe
+        // current-only row sharing it (e.g. deleting one unrelated FC block
+        // would block every never-clone-tracked F_LAD safety FC block forever).
+        // A "removed" row for a loose hand-placed _root file (Provenance =
+        // file-scan) is a new clone-only block and does not, by itself, make an
+        // unrelated visual block blocking.
 
         private struct BlockKey
         {
@@ -14198,13 +14200,6 @@ namespace OpennessLLM
                 foreach (RemovedCloneRef r in removed)
                 {
                     if (liveKey.CouldBeSameBlockAs(r.Key))
-                    {
-                        return true;
-                    }
-
-                    if (r.FromManifest
-                        && liveKey.NumberSpace.Length > 0
-                        && EqualsIgnoreCase(liveKey.NumberSpace, r.Key.NumberSpace))
                     {
                         return true;
                     }
@@ -22137,15 +22132,19 @@ namespace OpennessLLM
             };
             AssertTrue(SourceBlockerGateThrows("apply-clone", renumberedKeptName), "renamed+converted tracked block (name kept) must block");
 
-            // BOTH name and number change: no name/number pairing, but the removed
-            // row is a manifest-tracked block of the same number space -> fail closed.
+            // BOTH name and number change: no name/number pairing possible, and a
+            // same-number-space-only match is too broad for real projects (any
+            // unrelated block removed/moved elsewhere in the same number space would
+            // permanently block every fail-safe current-only row in that space) ->
+            // must NOT block.
             List<Dictionary<string, string>> renamedAndRenumbered = new List<Dictionary<string, string>>
             {
                 SourceBlockerTestRow("removed", "FC", "20", "FooBlock"),
                 SourceBlockerTestRow("source-blocked-current-only", "FC", "99", "BarBlock"),
             };
-            AssertTrue(SourceBlockerGateThrows("apply-clone", renamedAndRenumbered), "tracked block with both name and number changed before visual conversion must fail closed");
-            AssertTrue(SourceBlockerGateThrows("sync-clone", renamedAndRenumbered), "sync-clone must also refuse the ambiguous set");
+            EnsureNoSourceBlockersForWrite("apply-clone", renamedAndRenumbered);
+            EnsureNoSourceBlockersForWrite("sync-clone", renamedAndRenumbered);
+            AssertTrue(BlockingSourceBlockerCount(renamedAndRenumbered, new List<Dictionary<string, string>>()) == 0, "an unrelated removed block in the same number space must not block a fail-safe current-only row");
 
             // A tracked block of a DIFFERENT number space that went missing does not
             // make an unrelated fail-safe block blocking.
