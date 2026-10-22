@@ -503,6 +503,7 @@ namespace OpennessLLM
             Console.WriteLine();
             Console.WriteLine("compile-all options:");
             Console.WriteLine("  --apply              Actually compile. Without this, only report compile targets.");
+            Console.WriteLine("  --plc-only           Compile only PLC software targets (skip HMI and project-level provider)");
             Console.WriteLine("  --save               Save the project after a compile run with zero errors");
             Console.WriteLine("  --no-backup          Do not create a folder backup before --apply");
             Console.WriteLine();
@@ -16194,7 +16195,7 @@ namespace OpennessLLM
         private static void CompileAllCommand(object project, Options options)
         {
             InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
-            List<CompileTargetRecord> targets = BuildCompileAllTargets(project, snapshot);
+            List<CompileTargetRecord> targets = BuildCompileAllTargets(project, snapshot, options.PlcOnly);
 
             Console.WriteLine("Compile all");
             Console.WriteLine("  Project: " + snapshot.ProjectName);
@@ -16251,10 +16252,10 @@ namespace OpennessLLM
             }
         }
 
-        private static List<CompileTargetRecord> BuildCompileAllTargets(object project, InventorySnapshot snapshot)
+        private static List<CompileTargetRecord> BuildCompileAllTargets(object project, InventorySnapshot snapshot, bool plcOnly)
         {
             List<CompileTargetRecord> targets = new List<CompileTargetRecord>();
-            if (TryGetCompiler(project) != null)
+            if (!plcOnly && TryGetCompiler(project) != null)
             {
                 targets.Add(new CompileTargetRecord
                 {
@@ -16273,9 +16274,15 @@ namespace OpennessLLM
                     continue;
                 }
 
+                bool isPlc = record.SoftwareType != null && record.SoftwareType.IndexOf("PlcSoftware", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (plcOnly && !isPlc)
+                {
+                    continue;
+                }
+
                 targets.Add(new CompileTargetRecord
                 {
-                    Kind = record.SoftwareType != null && record.SoftwareType.IndexOf("PlcSoftware", StringComparison.OrdinalIgnoreCase) >= 0 ? "PlcSoftware" : "Software",
+                    Kind = isPlc ? "PlcSoftware" : "Software",
                     Path = record.Path,
                     TypeName = record.SoftwareType,
                     Object = record.Object
@@ -23352,6 +23359,7 @@ namespace OpennessLLM
             public bool NoBackup;
             public bool WritesPlcConfirmed;
             public bool UpdateSourceLanguage;
+            public bool PlcOnly;
             public bool Json;
             public bool ShowHelp;
             public bool ShowVersion;
@@ -23458,6 +23466,10 @@ namespace OpennessLLM
                     }
                     else if (EqualsIgnoreCase(arg, "--i-know-this-writes-plc"))
                     {
+                    else if (EqualsIgnoreCase(arg, "--plc-only"))
+                    {
+                        options.PlcOnly = true;
+                    }
                         options.WritesPlcConfirmed = true;
                     }
                     else if (EqualsIgnoreCase(arg, "--update-source-language"))

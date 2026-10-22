@@ -788,7 +788,10 @@ _metadata\apply-clone-preflight-issues.jsonl
 .\OpennessLLM\run.cmd compile-all --attach --attach-index 0
 .\OpennessLLM\run.cmd compile-all --attach --attach-index 0 --apply
 .\OpennessLLM\run.cmd compile-all --attach --attach-index 0 --apply --save
+.\OpennessLLM\run.cmd compile-all --attach --attach-index 0 --apply --plc-only
 ```
+
+`--plc-only` компилирует только PLC software (HMI и project-level provider пропускаются).
 
 Поведение:
 
