@@ -300,6 +300,12 @@ namespace OpennessLLM
                 return;
             }
 
+            if (EqualsIgnoreCase(options.Command, "hmi-screen-import"))
+            {
+                HmiScreenImportCommand(project, options);
+                return;
+            }
+
             if (EqualsIgnoreCase(options.Command, "clone-folders"))
             {
                 InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
@@ -8471,6 +8477,93 @@ namespace OpennessLLM
             }
         }
 
+        // Импорт одного экрана или попапа из XML (выгрузка hmi-export-xml) в открытый проект.
+        // Без --apply только проверка; существующий объект с тем же именем заменяется только с --force (ImportOptions.Override).
+        private static void HmiScreenImportCommand(object project, Options options)
+        {
+            string xmlPath = options.InDir;
+            if (string.IsNullOrWhiteSpace(xmlPath) || !File.Exists(xmlPath))
+            {
+                throw new InvalidOperationException("hmi-screen-import requires --in <path to one screen/popup XML file>.");
+            }
+
+            XmlDocument doc = new XmlDocument();
+            doc.Load(xmlPath);
+            XmlElement rootObject = null;
+            foreach (XmlNode child in doc.DocumentElement.ChildNodes)
+            {
+                XmlElement element = child as XmlElement;
+                if (element != null && element.Name.StartsWith("Hmi.Screen.", StringComparison.Ordinal))
+                {
+                    rootObject = element;
+                    break;
+                }
+            }
+
+            if (rootObject == null)
+            {
+                throw new InvalidOperationException("No Hmi.Screen.* root object was found in " + xmlPath);
+            }
+
+            string kind;
+            if (rootObject.Name == "Hmi.Screen.Screen")
+            {
+                kind = "Screen";
+            }
+            else if (rootObject.Name == "Hmi.Screen.ScreenPopup")
+            {
+                kind = "Popup";
+            }
+            else
+            {
+                throw new NotSupportedException("hmi-screen-import supports only Screen and ScreenPopup, found " + rootObject.Name);
+            }
+
+            XmlNode nameNode = rootObject.SelectSingleNode("AttributeList/Name");
+            string name = nameNode == null ? string.Empty : nameNode.InnerText;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new InvalidOperationException("The XML object has no Name attribute.");
+            }
+
+            InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
+            HmiInventorySnapshot hmiSnapshot = FilterHmiInventoryByTargetPath(CollectHmiInventory(snapshot), options.HmiTargetPathFilter);
+            HmiTargetRecord hmiTarget = hmiSnapshot.Targets.FirstOrDefault();
+            if (hmiTarget == null)
+            {
+                throw new InvalidOperationException("No HMI target was found (use --hmi-target-path).");
+            }
+
+            HmiImportProbeTarget probe = new HmiImportProbeTarget();
+            probe.Kind = kind;
+            probe.TargetPath = hmiTarget.TargetPath;
+            probe.FolderPath = string.Empty;
+            object container = ResolveHmiImportContainer(hmiSnapshot, probe);
+            bool exists = AsEnumerable(container).Any(x => EqualsIgnoreCase(SafeName(x), name));
+            MethodInfo import = FindHmiImportFileInfoMethod(container);
+
+            Console.WriteLine("HMI target: " + hmiTarget.TargetPath);
+            Console.WriteLine("Kind: " + kind + ", name: " + name);
+            Console.WriteLine("Container: " + container.GetType().FullName);
+            Console.WriteLine("Import method: " + DescribeMethod(import));
+            Console.WriteLine("Object with this name already exists: " + (exists ? "yes" : "no"));
+            if (exists && !options.Force)
+            {
+                throw new InvalidOperationException("An object named '" + name + "' already exists; rename it in the XML or add --force to replace it.");
+            }
+
+            if (!options.Apply)
+            {
+                Console.WriteLine("Dry run. Add --apply to import into the open project (project is not saved).");
+                return;
+            }
+
+            object importOptions = ChooseEnumValue(import.GetParameters()[1].ParameterType, exists ? new[] { "Override" } : new[] { "None" });
+            object result = import.Invoke(container, new object[] { new FileInfo(xmlPath), importOptions });
+            Console.WriteLine("Imported: " + (result == null ? name : SafeDescribe(result)));
+            Console.WriteLine("The TIA project is not saved by this command.");
+        }
+
         private static object ResolveHmiImportContainer(HmiInventorySnapshot hmiSnapshot, HmiImportProbeTarget target)
         {
             HmiTargetRecord hmiTarget = hmiSnapshot.Targets.FirstOrDefault(x => string.IsNullOrWhiteSpace(target.TargetPath) || EqualsIgnoreCase(x.TargetPath, target.TargetPath))
@@ -16420,6 +16513,7 @@ namespace OpennessLLM
             }
 
             InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
+            snapshot = FilterInventoryBySoftwarePath(snapshot, options.SoftwarePathFilter);
             object software = GetFirstPlcSoftware(snapshot);
             object externalSourceGroup = TryGetPropertyValue(software, "ExternalSourceGroup");
             if (externalSourceGroup == null)
@@ -16665,6 +16759,7 @@ namespace OpennessLLM
             }
 
             InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
+            snapshot = FilterInventoryBySoftwarePath(snapshot, options.SoftwarePathFilter);
             object software = GetFirstPlcSoftware(snapshot);
             object externalSourceGroup = TryGetPropertyValue(software, "ExternalSourceGroup");
             if (externalSourceGroup == null)
@@ -21202,6 +21297,7 @@ namespace OpennessLLM
                 || EqualsIgnoreCase(command, "delete-block")
                 || EqualsIgnoreCase(command, "create-test-visual-fb")
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply")
+                || EqualsIgnoreCase(command, "hmi-screen-import")
                 || EqualsIgnoreCase(command, "apply-clone");
         }
 
@@ -22762,6 +22858,7 @@ namespace OpennessLLM
                 || EqualsIgnoreCase(command, "hmi-project-texts-import-probe-copy")
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply-preflight")
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply")
+                || EqualsIgnoreCase(command, "hmi-screen-import")
                 || EqualsIgnoreCase(command, "self-test")
                 || EqualsIgnoreCase(command, "clean-local")
                 || EqualsIgnoreCase(command, "clone-folders")
@@ -23357,9 +23454,9 @@ namespace OpennessLLM
             public bool Apply;
             public bool Save;
             public bool NoBackup;
+            public bool PlcOnly;
             public bool WritesPlcConfirmed;
             public bool UpdateSourceLanguage;
-            public bool PlcOnly;
             public bool Json;
             public bool ShowHelp;
             public bool ShowVersion;
@@ -23464,12 +23561,12 @@ namespace OpennessLLM
                     {
                         options.NoBackup = true;
                     }
-                    else if (EqualsIgnoreCase(arg, "--i-know-this-writes-plc"))
-                    {
                     else if (EqualsIgnoreCase(arg, "--plc-only"))
                     {
                         options.PlcOnly = true;
                     }
+                    else if (EqualsIgnoreCase(arg, "--i-know-this-writes-plc"))
+                    {
                         options.WritesPlcConfirmed = true;
                     }
                     else if (EqualsIgnoreCase(arg, "--update-source-language"))
