@@ -897,8 +897,8 @@ XML нужен как полный snapshot, но для LLM-анализа сн
 только с `--force` (`ImportOptions.Override`). `--hmi-target-path` выбирает HMI target.
 
 ```cmd
-.\OpennessLLMun.cmd hmi-screen-import --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --in .\popup.xml
-.\OpennessLLMun.cmd hmi-screen-import --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --in .\popup.xml --apply --no-backup
+.\OpennessLLM\run.cmd hmi-screen-import --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --in .\popup.xml
+.\OpennessLLM\run.cmd hmi-screen-import --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --in .\popup.xml --apply --no-backup
 ```
 
 Перед `--force` проверьте, что имя в XML - именно того объекта, который нужно заменить:
