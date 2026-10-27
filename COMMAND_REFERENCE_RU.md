@@ -890,7 +890,7 @@ XML нужен как полный snapshot, но для LLM-анализа сн
 
 ### hmi-screen-import
 
-Импортирует один экран (`Hmi.Screen.Screen`) или попап (`Hmi.Screen.ScreenPopup`) из XML
+Импортирует один экран (`Hmi.Screen.Screen`), попап (`Hmi.Screen.ScreenPopup`) или шаблон (`Hmi.Screen.ScreenTemplate`) из XML
 в открытый проект. Формат XML - как у `hmi-export-xml`; вид объекта и имя берутся из файла.
 Это write-команда: без `--apply` только проверка (контейнер, имя, метод импорта), с `--apply`
 выполняется импорт, проект не сохраняется. Объект с тем же именем не заменяется, замена -

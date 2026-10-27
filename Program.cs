@@ -8477,7 +8477,7 @@ namespace OpennessLLM
             }
         }
 
-        // Импорт одного экрана или попапа из XML (выгрузка hmi-export-xml) в открытый проект.
+        // Импорт одного экрана, попапа или шаблона из XML (выгрузка hmi-export-xml) в открытый проект.
         // Без --apply только проверка; существующий объект с тем же именем заменяется только с --force (ImportOptions.Override).
         private static void HmiScreenImportCommand(object project, Options options)
         {
@@ -8514,9 +8514,13 @@ namespace OpennessLLM
             {
                 kind = "Popup";
             }
+            else if (rootObject.Name == "Hmi.Screen.ScreenTemplate")
+            {
+                kind = "Template";
+            }
             else
             {
-                throw new NotSupportedException("hmi-screen-import supports only Screen and ScreenPopup, found " + rootObject.Name);
+                throw new NotSupportedException("hmi-screen-import supports only Screen, ScreenPopup and ScreenTemplate, found " + rootObject.Name);
             }
 
             XmlNode nameNode = rootObject.SelectSingleNode("AttributeList/Name");
