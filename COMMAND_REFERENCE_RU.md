@@ -904,6 +904,18 @@ XML нужен как полный snapshot, но для LLM-анализа сн
 Перед `--force` проверьте, что имя в XML - именно того объекта, который нужно заменить:
 замена пересоздаёт объект (он переходит в конец списка).
 
+### hmi-screen-delete
+
+Удаляет один экран, попап или шаблон по точному имени. Write-команда: без `--apply` только
+проверка, с `--apply` объект удаляется, проект не сохраняется.
+
+```cmd
+.\OpennessLLM\run.cmd hmi-screen-delete --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --target Screen --name "CVRL135 SE-1 temp"
+.\OpennessLLM\run.cmd hmi-screen-delete --attach --attach-index 0 --hmi-target-path "HMI_1/HMI_RT_1/HMI_RT_1" --target Template --name "base_2 temp" --apply
+```
+
+`--target` - `Screen`, `Popup` или `Template`. Перед удалением сделайте выгрузку `hmi-export-xml`.
+
 ### hmi-init-clone
 
 Инициализирует HMI baseline внутри `CLONE_PROJECT`.

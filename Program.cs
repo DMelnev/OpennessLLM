@@ -306,6 +306,12 @@ namespace OpennessLLM
                 return;
             }
 
+            if (EqualsIgnoreCase(options.Command, "hmi-screen-delete"))
+            {
+                HmiScreenDeleteCommand(project, options);
+                return;
+            }
+
             if (EqualsIgnoreCase(options.Command, "clone-folders"))
             {
                 InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
@@ -8565,6 +8571,59 @@ namespace OpennessLLM
             object importOptions = ChooseEnumValue(import.GetParameters()[1].ParameterType, exists ? new[] { "Override" } : new[] { "None" });
             object result = import.Invoke(container, new object[] { new FileInfo(xmlPath), importOptions });
             Console.WriteLine("Imported: " + (result == null ? name : SafeDescribe(result)));
+            Console.WriteLine("The TIA project is not saved by this command.");
+        }
+
+        // Удаление одного экрана, попапа или шаблона по имени: --target Screen|Popup|Template --name <имя>.
+        // Без --apply только проверка; проект не сохраняется.
+        private static void HmiScreenDeleteCommand(object project, Options options)
+        {
+            string kind = options.TargetKind;
+            if (!(EqualsIgnoreCase(kind, "Screen") || EqualsIgnoreCase(kind, "Popup") || EqualsIgnoreCase(kind, "Template")))
+            {
+                throw new InvalidOperationException("hmi-screen-delete requires --target Screen|Popup|Template.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.Name))
+            {
+                throw new InvalidOperationException("hmi-screen-delete requires --name <object name>.");
+            }
+
+            InventorySnapshot snapshot = CollectInventory(project, options.ProjectPath);
+            HmiInventorySnapshot hmiSnapshot = FilterHmiInventoryByTargetPath(CollectHmiInventory(snapshot), options.HmiTargetPathFilter);
+            HmiTargetRecord hmiTarget = hmiSnapshot.Targets.FirstOrDefault();
+            if (hmiTarget == null)
+            {
+                throw new InvalidOperationException("No HMI target was found (use --hmi-target-path).");
+            }
+
+            HmiImportProbeTarget probe = new HmiImportProbeTarget();
+            probe.Kind = kind;
+            probe.TargetPath = hmiTarget.TargetPath;
+            probe.FolderPath = string.Empty;
+            object container = ResolveHmiImportContainer(hmiSnapshot, probe);
+            object victim = AsEnumerable(container).FirstOrDefault(x => string.Equals(SafeName(x), options.Name, StringComparison.Ordinal));
+            if (victim == null)
+            {
+                throw new InvalidOperationException("No " + kind + " named '" + options.Name + "' was found.");
+            }
+
+            MethodInfo delete = victim.GetType().GetMethod("Delete", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (delete == null)
+            {
+                throw new MissingMethodException(victim.GetType().FullName, "Delete");
+            }
+
+            Console.WriteLine("HMI target: " + hmiTarget.TargetPath);
+            Console.WriteLine("Kind: " + kind + ", name: " + options.Name);
+            if (!options.Apply)
+            {
+                Console.WriteLine("Dry run. Add --apply to delete the object (project is not saved).");
+                return;
+            }
+
+            delete.Invoke(victim, null);
+            Console.WriteLine("Deleted: " + options.Name);
             Console.WriteLine("The TIA project is not saved by this command.");
         }
 
@@ -21302,6 +21361,7 @@ namespace OpennessLLM
                 || EqualsIgnoreCase(command, "create-test-visual-fb")
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply")
                 || EqualsIgnoreCase(command, "hmi-screen-import")
+                || EqualsIgnoreCase(command, "hmi-screen-delete")
                 || EqualsIgnoreCase(command, "apply-clone");
         }
 
@@ -22863,6 +22923,7 @@ namespace OpennessLLM
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply-preflight")
                 || EqualsIgnoreCase(command, "hmi-project-texts-apply")
                 || EqualsIgnoreCase(command, "hmi-screen-import")
+                || EqualsIgnoreCase(command, "hmi-screen-delete")
                 || EqualsIgnoreCase(command, "self-test")
                 || EqualsIgnoreCase(command, "clean-local")
                 || EqualsIgnoreCase(command, "clone-folders")
